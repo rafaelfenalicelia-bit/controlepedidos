@@ -1,0 +1,20 @@
+CONTROLE DE PEDIDOS - PWA
+
+Arquivos do pacote:
+- index.html: sistema com Supabase + Realtime + instalação PWA
+- manifest.json: informações do aplicativo
+- service-worker.js: instalação/cache
+- icon-192.png e icon-512.png: ícones do aplicativo
+
+IMPORTANTE
+Não abra apenas o index.html por file:// para testar a instalação.
+A PWA precisa ser publicada em HTTPS (ou localhost durante desenvolvimento).
+
+Depois de publicar:
+1. Abra a URL no Chrome ou Edge.
+2. Faça login normalmente.
+3. No PC, use o botão "Instalar aplicativo" ou a opção de instalação do navegador.
+4. No Android, instale pelo Chrome.
+5. No iPhone/iPad, Safari > Compartilhar > Adicionar à Tela de Início.
+
+O banco continua sendo o Supabase e o Realtime continua sendo usado para sincronizar dispositivos.
