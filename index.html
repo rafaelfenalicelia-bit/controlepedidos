@@ -119,6 +119,23 @@
     color:var(--accent-dark);
     font-weight:700;
   }
+  .nav-edit-btn{
+    flex:0 0 auto;
+    border:none;
+    background:transparent;
+    color:var(--ink-soft);
+    cursor:pointer;
+    font-size:0.9rem;
+    line-height:1;
+    padding:3px 6px;
+    border-radius:6px;
+    opacity:0;
+    transition:opacity .15s, background .15s, color .15s;
+  }
+  .nav-item:hover .nav-edit-btn{ opacity:1; }
+  .nav-edit-btn:hover{ background:var(--surface); color:var(--accent); }
+  .nav-item.active .nav-edit-btn{ opacity:1; color:var(--accent); }
+  @media (hover: none){ .nav-edit-btn{ opacity:1; } }
   .nav-badge{
     font-size:0.62rem;
     background:var(--ink);
@@ -785,10 +802,42 @@ let state = {}; // { supplierId: { qty:{idx:num}, price:{idx:num}, lastSent:iso|
 let history = []; // [{id, supplierId, supplierName, dateISO, items:[...], total, resumo}]
 let customSuppliers = []; // fornecedores criados pelo usuário
 let currentView = 'dashboard';
+let pendingHeaderEdit = null; // id do fornecedor cujo painel de edição deve abrir ao renderizar
 function getAllSuppliers(){ return SUPPLIERS.concat(customSuppliers); }
 const fmt = n => 'R$ ' + Number(n).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
 const fmtInt = n => Number(n).toLocaleString('pt-BR');
 const escapeHtml = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const attrEsc = s => escapeHtml(s).replace(/"/g,'&quot;');
+
+// Monta o estado editável do cabeçalho (nome, subtítulo, comercial),
+// partindo dos dados originais do fornecedor e aplicando o que foi salvo.
+function buildHeaderState(s, saved){
+  const base = {
+    name: s.name || '',
+    subtitle: s.subtitle || '',
+    contactEnabled: !!s.contact,
+    contactName: s.contact ? (s.contact.name || '') : '',
+    contactPhone: s.contact ? (s.contact.phone || '') : '',
+    contactEmail: s.contact ? (s.contact.email || '') : ''
+  };
+  if(saved && typeof saved === 'object'){
+    return Object.assign(base, saved);
+  }
+  return base;
+}
+// Retorna os valores efetivos do cabeçalho para exibição/uso.
+function hdr(supplier){
+  const h = (state[supplier.id] && state[supplier.id].header) || buildHeaderState(supplier, null);
+  return h;
+}
+// Nome/subtítulo/comercial efetivos (com as edições do usuário aplicadas).
+function dName(supplier){ return hdr(supplier).name || supplier.name || ''; }
+function dSubtitle(supplier){ return hdr(supplier).subtitle || ''; }
+function dContact(supplier){
+  const h = hdr(supplier);
+  if(!h.contactEnabled) return null;
+  return {name: h.contactName || '', phone: h.contactPhone || '', email: h.contactEmail || null};
+}
 
 function getQty(supplier, idx){
   const s = state[supplier.id];
@@ -874,10 +923,11 @@ async function loadAll(){
         unitOverride: parsed.unitOverride || {},
         deleted: parsed.deleted || {},
         customItems: parsed.customItems || [],
-        headerLabels: Object.assign({}, DEFAULT_HEADER_LABELS, parsed.headerLabels || {})
+        headerLabels: Object.assign({}, DEFAULT_HEADER_LABELS, parsed.headerLabels || {}),
+        header: buildHeaderState(s, parsed.header)
       };
     }catch(e){
-      state[s.id] = {qty:{}, price:{}, lastSent:null, billing: s.billingDefault || 'matriz_sc', paymentTerm: s.defaultPaymentTerm || '', observacao: (s.notes && s.notes.length) ? s.notes.join('\n') : '', internalNotes:'', descOverride:{}, unitOverride:{}, deleted:{}, customItems:[], headerLabels:Object.assign({}, DEFAULT_HEADER_LABELS)};
+      state[s.id] = {qty:{}, price:{}, lastSent:null, billing: s.billingDefault || 'matriz_sc', paymentTerm: s.defaultPaymentTerm || '', observacao: (s.notes && s.notes.length) ? s.notes.join('\n') : '', internalNotes:'', descOverride:{}, unitOverride:{}, deleted:{}, customItems:[], headerLabels:Object.assign({}, DEFAULT_HEADER_LABELS), header: buildHeaderState(s, null)};
     }
   }
   try{
@@ -919,8 +969,8 @@ function billingLabel(supplier){
 }
 function buildResumo(supplier){
   const lines = [];
-  lines.push(`PEDIDO — ${supplier.name.toUpperCase()}`);
-  lines.push(supplier.subtitle);
+  lines.push(`PEDIDO — ${dName(supplier).toUpperCase()}`);
+  if(dSubtitle(supplier)) lines.push(dSubtitle(supplier));
   lines.push(billingLabel(supplier));
   if(state[supplier.id].paymentTerm) lines.push(`Prazo de pagamento: ${state[supplier.id].paymentTerm}`);
   lines.push(`Data: ${new Date().toLocaleDateString('pt-BR')}`);
@@ -943,9 +993,10 @@ function buildResumo(supplier){
     lines.push(`TOTAL DO PEDIDO: ${fmt(total)}`);
   }
   lines.push(`QUANTIDADE TOTAL: ${fmtInt(supplierQtyTotal(supplier))} unid.`);
-  if(supplier.contact){
+  const rc = dContact(supplier);
+  if(rc && (rc.name || rc.phone || rc.email)){
     lines.push('');
-    lines.push(`Comercial: ${supplier.contact.name}${supplier.contact.phone? ' - '+supplier.contact.phone : ''}${supplier.contact.email? ' - '+supplier.contact.email : ''}`);
+    lines.push(`Comercial: ${rc.name}${rc.phone? ' - '+rc.phone : ''}${rc.email? ' - '+rc.email : ''}`);
   }
   if(supplier.info && Object.keys(supplier.info).length){
     lines.push('');
@@ -981,7 +1032,8 @@ function printOrder(supplier){
     </tr>`;
   }).join('');
 
-  const contactLine = supplier.contact ? `Comercial: ${supplier.contact.name}${supplier.contact.phone? ' · '+supplier.contact.phone:''}${supplier.contact.email? ' · '+supplier.contact.email:''}` : '';
+  const pc = dContact(supplier);
+  const contactLine = (pc && (pc.name || pc.phone || pc.email)) ? `Comercial: ${escapeHtml(pc.name)}${pc.phone? ' · '+escapeHtml(pc.phone):''}${pc.email? ' · '+escapeHtml(pc.email):''}` : '';
   const infoRows = Object.entries(supplier.info||{}).map(([k,v])=>`<div><b>${k}:</b> ${v}</div>`).join('');
   const observacao = state[supplier.id].observacao;
   const notesRows = observacao ? `<div><b>Observação:</b> ${escapeHtml(observacao).replace(/\n/g,'<br>')}</div>` : '';
@@ -992,8 +1044,8 @@ function printOrder(supplier){
     <div class="print-header">
       ${logoUrl ? `<img class="print-logo" src="${logoUrl}" alt="Célia">` : `<div class="print-logo-text">Célia</div>`}
       <div class="print-header-info">
-        <h1>Pedido — ${supplier.name}</h1>
-        <div>${supplier.subtitle} · ${billingLabel(supplier)}</div>
+        <h1>Pedido — ${escapeHtml(dName(supplier))}</h1>
+        <div>${dSubtitle(supplier)? escapeHtml(dSubtitle(supplier))+' · ' : ''}${billingLabel(supplier)}</div>
         ${contactLine ? `<div>${contactLine}</div>` : ''}
         ${paymentTerm ? `<div>Prazo de pagamento: ${paymentTerm}</div>` : ''}
         <div>Data: ${new Date().toLocaleDateString('pt-BR')}</div>
@@ -1118,7 +1170,7 @@ function renderNewSupplierForm(){
       info: {}
     };
     customSuppliers.push(supplier);
-    state[id] = {qty:{}, price:{}, lastSent:null, billing: billingDefault, paymentTerm:'', observacao:'', internalNotes:'', descOverride:{}, unitOverride:{}, deleted:{}, customItems:[], headerLabels:Object.assign({}, DEFAULT_HEADER_LABELS, {price: priceLabel})};
+    state[id] = {qty:{}, price:{}, lastSent:null, billing: billingDefault, paymentTerm:'', observacao:'', internalNotes:'', descOverride:{}, unitOverride:{}, deleted:{}, customItems:[], headerLabels:Object.assign({}, DEFAULT_HEADER_LABELS, {price: priceLabel}), header: buildHeaderState(supplier, null)};
     try{
       await AppStorage.set('fornecedores_customizados', JSON.stringify(customSuppliers), false);
       showToast('Fornecedor criado');
@@ -1149,7 +1201,14 @@ function renderNav(){
     const div = document.createElement('div');
     div.className = 'nav-item' + (currentView===s.id ? ' active':'');
     div.dataset.view = s.id;
-    div.innerHTML = `<span>${s.name}</span>`;
+    div.innerHTML = `<span>${escapeHtml(dName(s))}</span><button class="nav-edit-btn" type="button" title="Editar dados do fornecedor" aria-label="Editar dados de ${attrEsc(dName(s))}">✎</button>`;
+    const editBtn = div.querySelector('.nav-edit-btn');
+    editBtn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      pendingHeaderEdit = s.id;
+      currentView = s.id;
+      render();
+    });
     nav.appendChild(div);
   });
   const addDiv = document.createElement('div');
@@ -1199,11 +1258,12 @@ function renderDashboard(){
           ${getAllSuppliers().map(s=>{
             const t = supplierTotal(s);
             const last = state[s.id] && state[s.id].lastSent ? new Date(state[s.id].lastSent).toLocaleDateString('pt-BR') : '—';
+            const sc = dContact(s);
             return `<tr style="cursor:pointer" data-view="${s.id}">
-              <td><b>${s.name}</b></td>
-              <td>${s.subtitle}</td>
-              <td>${s.contact ? s.contact.name : '—'}</td>
-              <td>${s.contact && s.contact.phone ? s.contact.phone : '—'}</td>
+              <td><b>${escapeHtml(dName(s))}</b></td>
+              <td>${escapeHtml(dSubtitle(s))}</td>
+              <td>${sc ? escapeHtml(sc.name) : '—'}</td>
+              <td>${sc && sc.phone ? escapeHtml(sc.phone) : '—'}</td>
               <td class="num">${fmtInt(supplierQtyTotal(s))}</td>
               <td class="num">${t!==null? fmt(t) : '—'}</td>
               <td>${last}</td>
@@ -1222,12 +1282,43 @@ function renderDashboard(){
 /* ============================================================
    RENDER: SUPPLIER
    ============================================================ */
+// Atualiza o cabeçalho exibido (nome/subtítulo/comercial) ao vivo,
+// sem recriar a página, para não perder o foco enquanto o usuário digita.
+function updateHeaderDisplay(supplier){
+  const h = hdr(supplier);
+  const head = document.querySelector('.page-head');
+  if(!head) return;
+  const h1 = head.querySelector('h1');
+  if(h1) h1.textContent = h.name;
+  const metas = head.querySelectorAll('.meta');
+  if(metas[0]) metas[0].textContent = h.subtitle;
+  // linha do comercial
+  let contactLine = metas[1];
+  const infoBox = head.querySelector('h1') ? head.querySelector('h1').parentElement : null;
+  if(h.contactEnabled){
+    const htmlContact = `Comercial: <b>${escapeHtml(h.contactName)}</b>${h.contactPhone? ` · Tel: <b>${escapeHtml(h.contactPhone)}</b>` : ''}`;
+    if(contactLine){ contactLine.innerHTML = htmlContact; }
+    else if(infoBox){
+      const div = document.createElement('div');
+      div.className = 'meta';
+      div.innerHTML = htmlContact;
+      infoBox.appendChild(div);
+    }
+  } else if(contactLine){
+    contactLine.remove();
+  }
+  // nome no menu lateral
+  const navItem = document.querySelector(`.nav-item[data-view="${supplier.id}"] span`);
+  if(navItem) navItem.textContent = h.name;
+}
+
 function renderSupplier(supplier){
   const main = document.getElementById('main');
   const extraCols = supplier.extraCols || [];
   const total = supplierTotal(supplier);
   const lastSent = state[supplier.id].lastSent;
   const items = getItemsList(supplier);
+  const h = hdr(supplier);
 
   let rows = items.map(row=>{
     const sub = (row.price!==null && row.price!==undefined && supplier.primaryPriceLabel) ? row.qty*row.price : null;
@@ -1253,16 +1344,54 @@ function renderSupplier(supplier){
   const html = `
     <div class="page-head">
       <div style="display:flex;align-items:center;gap:16px">
-        ${supplier.logo ? `<img src="${supplier.logo}" alt="${supplier.name}" style="height:52px;width:auto;max-width:140px;object-fit:contain;border-radius:8px;">` : ''}
+        ${supplier.logo ? `<img src="${supplier.logo}" alt="${escapeHtml(h.name)}" style="height:52px;width:auto;max-width:140px;object-fit:contain;border-radius:8px;">` : ''}
         <div>
-          <h1>${supplier.name}</h1>
-          <div class="meta">${supplier.subtitle}</div>
-          ${supplier.contact ? `<div class="meta">Comercial: <b>${supplier.contact.name}</b>${supplier.contact.phone? ` · Tel: <b>${supplier.contact.phone}</b>` : ''}</div>` : ''}
+          <h1>${escapeHtml(h.name)}</h1>
+          <div class="meta">${escapeHtml(h.subtitle)}</div>
+          ${h.contactEnabled ? `<div class="meta">Comercial: <b>${escapeHtml(h.contactName)}</b>${h.contactPhone? ` · Tel: <b>${escapeHtml(h.contactPhone)}</b>` : ''}</div>` : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
+        <button class="ghost" id="btnEditHeader">Editar dados</button>
         ${supplier.custom ? `<button class="ghost" id="btnDeleteSupplier">Remover fornecedor</button>` : ''}
         <div class="stamp ${lastSent? 'sent':'pending'}">${lastSent? 'Enviado '+new Date(lastSent).toLocaleDateString('pt-BR') : 'Pendente de envio'}</div>
+      </div>
+    </div>
+
+    <div class="card" id="headerEditCard" style="display:none">
+      <h2>Editar dados do fornecedor</h2>
+      <div class="order-meta">
+        <div class="field-group" style="min-width:280px">
+          <label for="ehName">Nome da empresa</label>
+          <input type="text" id="ehName" value="${attrEsc(h.name)}" placeholder="Nome do fornecedor">
+        </div>
+        <div class="field-group" style="min-width:280px">
+          <label for="ehSubtitle">Subtítulo / faturamento</label>
+          <input type="text" id="ehSubtitle" value="${attrEsc(h.subtitle)}" placeholder="Ex.: Faturado para SC">
+        </div>
+      </div>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;font-weight:600;color:var(--ink);text-transform:none;letter-spacing:0">
+          <input type="checkbox" id="ehContactEnabled" style="width:16px;height:16px" ${h.contactEnabled?'checked':''}> Exibir dados do comercial
+        </label>
+      </div>
+      <div class="order-meta" id="ehContactFields" style="margin-top:14px;${h.contactEnabled?'':'display:none'}">
+        <div class="field-group">
+          <label for="ehContactName">Nome do comercial</label>
+          <input type="text" id="ehContactName" value="${attrEsc(h.contactName)}" placeholder="Ex.: Ana">
+        </div>
+        <div class="field-group">
+          <label for="ehContactPhone">Telefone</label>
+          <input type="text" id="ehContactPhone" value="${attrEsc(h.contactPhone)}" placeholder="Ex.: 48 98859-5969">
+        </div>
+        <div class="field-group">
+          <label for="ehContactEmail">E-mail (opcional)</label>
+          <input type="text" id="ehContactEmail" value="${attrEsc(h.contactEmail)}" placeholder="comercial@empresa.com.br">
+        </div>
+      </div>
+      <div class="tear">
+        <button class="ghost" id="btnHeaderReset">Restaurar padrão</button>
+        <button class="primary" id="btnHeaderClose">Concluir</button>
       </div>
     </div>
 
@@ -1382,6 +1511,67 @@ function wireSupplierEvents(supplier){
     const delBtn = document.getElementById('btnDeleteSupplier');
     if(delBtn) delBtn.onclick = ()=> deleteCustomSupplier(supplier);
   }
+  // ---- edição do cabeçalho (nome, subtítulo, comercial) ----
+  (function(){
+    const card = document.getElementById('headerEditCard');
+    const btnEdit = document.getElementById('btnEditHeader');
+    if(!card || !btnEdit) return;
+    const st = state[supplier.id];
+    if(!st.header) st.header = buildHeaderState(supplier, null);
+
+    btnEdit.onclick = ()=>{
+      const showing = card.style.display !== 'none';
+      card.style.display = showing ? 'none' : 'block';
+      if(!showing) card.scrollIntoView({behavior:'smooth', block:'nearest'});
+    };
+
+    // Abre o painel de edição automaticamente quando chega pelo lápis da barra lateral.
+    if(pendingHeaderEdit === supplier.id){
+      pendingHeaderEdit = null;
+      card.style.display = 'block';
+      setTimeout(()=>{ card.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 60);
+      const first = document.getElementById('ehName');
+      if(first) setTimeout(()=>{ try{ first.focus(); }catch(e){} }, 120);
+    }
+
+    function bindField(id, key){
+      const el = document.getElementById(id);
+      if(!el) return;
+      el.addEventListener('input', ()=>{
+        st.header[key] = el.value;
+        saveSupplierState(supplier.id);
+        updateHeaderDisplay(supplier);
+      });
+    }
+    bindField('ehName', 'name');
+    bindField('ehSubtitle', 'subtitle');
+    bindField('ehContactName', 'contactName');
+    bindField('ehContactPhone', 'contactPhone');
+    bindField('ehContactEmail', 'contactEmail');
+
+    const chk = document.getElementById('ehContactEnabled');
+    const contactFields = document.getElementById('ehContactFields');
+    if(chk){
+      chk.addEventListener('change', ()=>{
+        st.header.contactEnabled = chk.checked;
+        if(contactFields) contactFields.style.display = chk.checked ? '' : 'none';
+        saveSupplierState(supplier.id);
+        updateHeaderDisplay(supplier);
+      });
+    }
+
+    const btnClose = document.getElementById('btnHeaderClose');
+    if(btnClose) btnClose.onclick = ()=>{ card.style.display = 'none'; };
+
+    const btnReset = document.getElementById('btnHeaderReset');
+    if(btnReset) btnReset.onclick = ()=>{
+      if(!confirm('Restaurar os dados originais deste fornecedor (nome, subtítulo e comercial)?')) return;
+      st.header = buildHeaderState(supplier, null);
+      saveSupplierState(supplier.id);
+      renderNav();
+      renderSupplier(supplier);
+    };
+  })();
   [['hlDesc','desc'],['hlUnit','unit'],['hlQty','qty'],['hlPrice','price'],['hlSubtotal','subtotal']].forEach(([elId,key])=>{
     const el = document.getElementById(elId);
     if(!el) return;
@@ -1481,14 +1671,16 @@ function wireSupplierEvents(supplier){
   };
   document.getElementById('btnWhats').onclick = ()=>{
     const text = encodeURIComponent(buildResumo(supplier));
-    const phone = supplier.contact && supplier.contact.phone ? supplier.contact.phone.replace(/\D/g,'') : '';
+    const c = dContact(supplier);
+    const phone = c && c.phone ? c.phone.replace(/\D/g,'') : '';
     const ddi = phone ? '55'+phone : '';
     window.open(`https://wa.me/${ddi}?text=${text}`, '_blank');
   };
   document.getElementById('btnEmail').onclick = ()=>{
-    const subject = encodeURIComponent(`Pedido — ${supplier.name}`);
+    const subject = encodeURIComponent(`Pedido — ${dName(supplier)}`);
     const body = encodeURIComponent(buildResumo(supplier));
-    const to = (supplier.contact && supplier.contact.email) ? supplier.contact.email : '';
+    const c = dContact(supplier);
+    const to = (c && c.email) ? c.email : '';
     window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
   };
   document.getElementById('btnPDF').onclick = ()=>{
@@ -1500,7 +1692,7 @@ function wireSupplierEvents(supplier){
     const entry = {
       id: 'h'+Date.now(),
       supplierId: supplier.id,
-      supplierName: supplier.name,
+      supplierName: dName(supplier),
       dateISO,
       qtyTotal: supplierQtyTotal(supplier),
       total: supplierTotal(supplier),
